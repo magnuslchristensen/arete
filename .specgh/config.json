@@ -1,0 +1,21 @@
+{
+  "repo": "magnuslchristensen/arete",
+  "default_branch": "main",
+  "milestones": {
+    "1": "Phase 1 — Foundation",
+    "2": "Phase 2 — Plan Engine",
+    "3": "Phase 3 — GPS & Routes",
+    "4": "Phase 4 — Calendar Sync",
+    "5": "Phase 5 — Motivation System",
+    "6": "Phase 6 — Injury Handling"
+  },
+  "labels": {
+    "spec": "spec",
+    "task": "task",
+    "bug": "bug",
+    "blocked": "blocked",
+    "in_progress": "in-progress",
+    "needs_clarification": "needs-clarification"
+  },
+  "specgh_version": "1.0.0"
+}
