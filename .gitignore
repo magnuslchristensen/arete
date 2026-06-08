@@ -1,1 +1,4 @@
 .specgh/*.tmp
+
+# specgh plugin skill files — kept machine-local, not vendored into the repo
+.claude/skills/
