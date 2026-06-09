@@ -5,3 +5,16 @@
 
 # macOS
 .DS_Store
+
+# Node / TypeScript
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# Prisma generated client
+src/db/generated/

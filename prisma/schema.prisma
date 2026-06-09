@@ -1,0 +1,384 @@
+// Prisma schema — Arete persistence foundation.
+// Entities defined per arete-spec.md §8 (v0.3).
+// Connection is configured in prisma.config.ts (Prisma 7).
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/db/generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum FitnessLevel {
+  beginner
+  casual
+  goal_oriented
+}
+
+enum CalendarProvider {
+  google
+  apple
+}
+
+enum CredentialKind {
+  auth_token
+  calendar_token
+}
+
+enum PlanPhase {
+  base
+  build
+  peak
+  taper
+}
+
+enum SessionType {
+  easy
+  tempo
+  intervals
+  long
+  recovery
+  cross
+  rest
+}
+
+enum PaceZone {
+  z1
+  z2
+  z3
+  z4
+  z5
+}
+
+enum SessionStatus {
+  scheduled
+  completed
+  missed
+  skipped
+}
+
+enum RouteSurface {
+  road
+  trail
+  track
+  treadmill
+  mixed
+}
+
+enum RouteSource {
+  osm
+  google
+  user
+}
+
+enum CalendarSyncStatus {
+  pending
+  synced
+  conflict
+  failed
+}
+
+enum MilestoneType {
+  distance_pb
+  pace_pb
+  streak
+  total_km
+  challenge_complete
+}
+
+enum InjuryType {
+  knee
+  shin
+  calf
+  hip
+  foot
+  fatigue
+  illness
+  other
+}
+
+enum InjuryStatus {
+  active
+  recovering
+  resolved
+}
+
+enum ChallengeType {
+  time_trial
+  distance_pb_attempt
+  themed
+}
+
+enum ChallengeTargetMetric {
+  distance
+  pace
+  sessions_count
+}
+
+enum ChallengeStatus {
+  offered
+  accepted
+  completed
+  declined
+  expired
+}
+
+// ─── User ─────────────────────────────────────────────────────────────────────
+
+/// Top-level owner entity. Holds profile and HR/goal fields.
+/// Secrets (auth_tokens, calendar_token) live in Credential — not here.
+model User {
+  id    String @id
+  email String @unique
+
+  name String
+
+  fitnessLevel        FitnessLevel
+  weeklyAvailability  Int?
+  goalEvent           String?
+  goalDate            DateTime?    @db.Date
+  calendarProvider    CalendarProvider?
+
+  // Physiological profile (§4.1 HR zones)
+  age                      Int?
+  hrMaxEstimated           Int?
+  restingHr                Int?
+  estimatedThresholdPace   Int? // sec/km
+
+  // Motivation counters (§6)
+  currentStreak           Int @default(0)
+  totalDistanceLifetime   Int @default(0) // metres
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  // Relations
+  credentials    Credential[]
+  trainingPlans  TrainingPlan[]
+  sessions       Session[]
+  routes         Route[]
+  milestones     Milestone[]
+  injuryReports  InjuryReport[]
+  challenges     Challenge[]
+
+  @@map("users")
+}
+
+// ─── Credential ───────────────────────────────────────────────────────────────
+
+/// Encrypted token store. auth_tokens and calendar_token live here, not on User.
+/// The ciphertext is AES-256 encrypted at the application layer (key in env).
+model Credential {
+  id       String         @id
+  userId   String
+  kind     CredentialKind
+  provider CalendarProvider? // set for calendar_token rows
+
+  ciphertext Bytes // encrypted token payload
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, kind, provider])
+  @@map("credentials")
+}
+
+// ─── TrainingPlan ─────────────────────────────────────────────────────────────
+
+/// A periodized training plan belonging to a user (§5).
+model TrainingPlan {
+  id     String @id
+  userId String
+
+  goal        String?
+  phase       PlanPhase
+  cycleLabel  String? // e.g. "Build your base — Summer 2026" (§6)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions      Session[]
+  injuryReports InjuryReport[]
+
+  @@map("training_plans")
+}
+
+// ─── Session ─────────────────────────────────────────────────────────────────
+
+/// A single training session — planned values + actual values on completion (§4.2).
+/// Distances in metres, durations in seconds, pace in sec/km (FR-13).
+model Session {
+  id           String  @id
+  userId       String
+  planId       String
+  routeId      String?
+
+  scheduledDate  DateTime    @db.Date
+  sessionType    SessionType
+  status         SessionStatus @default(scheduled)
+
+  // Planned targets
+  targetDistance     Int?
+  targetPaceZone     PaceZone?
+
+  // Actual values — populated on completion
+  actualDistance   Int?
+  actualAvgPace    Int? // sec/km
+  actualDuration   Int? // seconds
+  hrAvg            Int? // bpm
+
+  notes String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan          TrainingPlan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+  route         Route?         @relation(fields: [routeId], references: [id], onDelete: SetNull)
+  calendarEvent CalendarEvent?
+
+  @@index([planId])
+  @@index([scheduledDate])
+  @@index([userId, scheduledDate])
+  @@map("sessions")
+}
+
+// ─── Route ───────────────────────────────────────────────────────────────────
+
+/// A GPS route. polyline stored as encoded polyline string (§7).
+/// Private per-user; sharing is out of scope for v1.
+model Route {
+  id     String @id
+  userId String
+
+  polyline      String  @db.Text // Google encoded polyline
+  distance      Int     // metres
+  elevationGain Int?    // metres
+  surfaceType   RouteSurface?
+  source        RouteSource?
+
+  generatedAt DateTime?
+
+  saved     Boolean @default(false)
+  savedName String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions   Session[]
+  challenges Challenge[]
+
+  @@map("routes")
+}
+
+// ─── CalendarEvent ────────────────────────────────────────────────────────────
+
+/// Links a session to an external calendar event (§4.5).
+/// One event per session (1-1 via unique sessionId).
+model CalendarEvent {
+  id        String @id
+  sessionId String @unique
+
+  externalEventId  String
+  calendarProvider CalendarProvider
+  syncStatus       CalendarSyncStatus @default(pending)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("calendar_events")
+}
+
+// ─── Milestone ────────────────────────────────────────────────────────────────
+
+/// An achievement marker — PB, streak, total distance, or challenge completion (§6).
+/// NOT a race goal; goal_event and goal_date live on User.
+model Milestone {
+  id     String @id
+  userId String
+
+  type        MilestoneType
+  challengeId String? // set when type = challenge_complete
+
+  achievedAt     DateTime
+  value          Decimal  // metric value (metres, sec/km, count, etc.)
+  displayMessage String   @db.Text // identity-reinforcing message (§6)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challenge Challenge? @relation(fields: [challengeId], references: [id], onDelete: SetNull)
+
+  @@map("milestones")
+}
+
+// ─── InjuryReport ─────────────────────────────────────────────────────────────
+
+/// An injury or illness report that drives plan restructuring (§4.6).
+model InjuryReport {
+  id     String @id
+  userId String
+
+  reportedAt          DateTime
+  injuryType          InjuryType
+  severity            Int        // 1–5 (validated at app layer)
+  estimatedDurationDays Int?
+
+  status              InjuryStatus @default(active)
+  recoveryTargetDate  DateTime?    @db.Date
+  affectedPlanId      String?
+
+  crossTrainingSuggested Json?    // e.g. ["cycling", "swimming"]
+  goalAtRisk             Boolean  @default(false)
+  notes                  String?  @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  affectedPlan TrainingPlan? @relation(fields: [affectedPlanId], references: [id], onDelete: SetNull)
+
+  @@map("injury_reports")
+}
+
+// ─── Challenge ────────────────────────────────────────────────────────────────
+
+/// An optional mini-challenge proposed to the user (§6).
+/// Always opt-in; completion may create a challenge_complete Milestone.
+model Challenge {
+  id     String @id
+  userId String
+
+  challengeType  ChallengeType
+  title          String
+  description    String? @db.Text
+
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+
+  targetMetric ChallengeTargetMetric?
+  targetValue  Decimal?
+  linkedRouteId String?
+
+  status ChallengeStatus @default(offered)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  linkedRoute Route?      @relation(fields: [linkedRouteId], references: [id], onDelete: SetNull)
+  milestones  Milestone[]
+
+  @@map("challenges")
+}
