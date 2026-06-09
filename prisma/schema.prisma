@@ -1,0 +1,12 @@
+// Prisma schema — Arete persistence foundation.
+// Entities defined per arete-spec.md §8 (v0.3).
+// Connection is configured in prisma.config.ts (Prisma 7).
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/db/generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
