@@ -26,6 +26,9 @@ export default defineConfig({
       return makeAdapter();
     },
   },
+  migrations: {
+    seed: 'node --import tsx/esm prisma/seed.ts',
+  },
 });
 
 // Export the factory so src/db/client.ts can reuse it.
