@@ -40,6 +40,6 @@
     "uuidv7": "^1.2.1"
   },
   "prisma": {
-    "seed": "tsx prisma/seed.ts"
+    "seed": "node --import tsx/esm prisma/seed.ts"
   }
 }
